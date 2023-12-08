@@ -12,13 +12,13 @@ bot = telebot.TeleBot(TOKEN)
 def find_most_relevant_entity(normalized_text, contacts_data):
     doc = nlp(normalized_text)
 
-    # Собираем все сущности из вопроса
-    entities = set([ent.text.lower() for ent in doc.ents])
+    # Собираем все ключевые слова из вопроса
+    keywords = set([token.text.lower() for token in doc if token.text.lower() not in contacts_data])
 
     # Определяем релевантное слово из вопроса
     relevant_word = None
     for token in doc:
-        if token.text.lower() not in entities:
+        if token.text.lower() in keywords:
             relevant_word = token.text.lower()
             break
 
@@ -26,8 +26,7 @@ def find_most_relevant_entity(normalized_text, contacts_data):
 
 
 def normalize_text(text):
-    # Здесь можете реализовать функцию нормализации текста по вашему усмотрению
-    return text.lower()  # В этом примере мы просто приводим текст к нижнему регистру
+    return text.lower()
 
 
 def log_message_info(message, normalized_text, detected_entities):
@@ -44,12 +43,11 @@ def reply_to_question_debug(message, nlp, contacts_data):
     normalized_text = normalize_text(message.text)
     detected_entities = []
 
-    log_message_info(message, normalized_text, detected_entities)  # Выводим отладочную информацию
+    log_message_info(message, normalized_text, detected_entities)
 
     if nlp is not None:
         doc = nlp(normalized_text)
 
-        # Выводим дополнительные данные из spaCy
         print("Токены spaCy:", [token.text for token in doc])
         print("Леммы spaCy:", [token.lemma_ for token in doc])
         print("POS spaCy:", [(token.text, token.pos_) for token in doc])
@@ -58,46 +56,43 @@ def reply_to_question_debug(message, nlp, contacts_data):
         for ent in doc.ents:
             detected_entities.append((ent.text, ent.label_))
 
-    # Поиск ответа в данных
-    # Добавляем логику для динамической установки target_entity
-    target_entity = get_dynamic_target_entity(normalized_text, contacts_data)
-    answer = find_answer(normalized_text, contacts_data)
+    target_entity = get_dynamic_target_entity(normalized_text, contacts_data, detected_entities)
+    answer = find_answer(normalized_text, contacts_data, target_entity=target_entity)
 
-    # Отправка ответа обратно в чат
     reply_text = f"Ответ на ваш вопрос '{normalized_text}': {answer}"
     bot.send_message(message.chat.id, reply_text)
+
+    detected_topics = [entity[0] for entity in detected_entities]
+    print(f"Обнаруженные темы: {detected_topics}")
 
     return reply_text
 
 
-def get_dynamic_target_entity(normalized_text, contacts_data):
-    # Добавьте вашу логику по определению динамического target_entity
-    # Например, можно использовать process.extractOne для сопоставления текста и выбрать наилучшее совпадение
-    # Верните ключ (название сущности), которое соответствует наилучшему совпадению
+def get_dynamic_target_entity(normalized_text, contacts_data, detected_entities):
+    for ent_text, ent_label in detected_entities:
+        if ent_label == "ORG" or ent_label == "PHONE" or ent_label == "EMAIL":
+            return ent_text.lower()
 
-    # В примере возвращаем первый найденный ключ
     for key in contacts_data:
         ratio = process.extractOne(normalized_text, [key], score_cutoff=70)
         if ratio:
-            return key
+            return key.lower()
 
-    # Если ничего не найдено, возвращаем None
     return None
 
 
-def find_answer(normalized_text, contacts_data):
-    # Определяем наиболее релевантное слово из вопроса
-    target_entity = find_most_relevant_entity(normalized_text, contacts_data)
+def find_answer(normalized_text, contacts_data, target_entity=None):
+    keywords = normalized_text.split()
 
-    # Проходим по всем ключам в словаре
-    for key in contacts_data:
-        # Сравниваем вопрос с каждым ключом с использованием частичного сопоставления
-        ratio = process.extractOne(normalized_text, [key], score_cutoff=70)  # Можно настроить порог сопоставления
-        if ratio:
-            # Проверяем, запрашивается ли конкретная сущность
-            if target_entity is not None and target_entity in contacts_data[key]:
-                return contacts_data[key][target_entity]
-            return contacts_data[key]
+    if target_entity:
+        keywords.append(target_entity)
 
-    # Если ничего не найдено, возвращаем None
-    return None
+    current_data = contacts_data
+
+    for keyword in keywords:
+        if keyword in current_data:
+            current_data = current_data[keyword]
+        else:
+            return None
+
+    return current_data
